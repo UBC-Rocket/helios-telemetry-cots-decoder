@@ -1,0 +1,3 @@
+[submodule "helios-python"]
+	path = helios-python
+	url = https://github.com/UBC-Rocket/helios-python
