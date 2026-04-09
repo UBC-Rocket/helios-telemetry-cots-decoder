@@ -39,27 +39,44 @@ uv sync
 ### Running the Decoder
 
 ```bash
-python src/main.py
+# Basic usage - read from serial port
+python src/main.py -p /dev/ttyUSB0
+
+# With custom baud rate (default: 115200)
+python src/main.py -p /dev/ttyACM0 -b 9600
+
+# Verbose mode (shows raw hex data)
+python src/main.py -p /dev/ttyUSB0 -v
+
+# With custom timeout (in seconds)
+python src/main.py -p /dev/ttyUSB0 -t 2.0
+
+# Log output to CSV file
+python src/main.py -p /dev/ttyUSB0 -o telemetry.csv
+
+# Using environment variables
+SERIAL_PORT=/dev/ttyUSB0 SERIAL_BAUD=115200 python src/main.py
 ```
 
-### Example
+### Configuration via Environment Variables
 
-```bash
-python src/example.py
-```
+The decoder can be configured using environment variables (useful for Docker):
+- `SERIAL_PORT` - Serial device path (default: `/dev/radio`)
+- `SERIAL_BAUD` - Baud rate (default: `115200`)
+- `SERIAL_TIMEOUT` - Per-byte read timeout in seconds (default: `1.0`)
+- `CSV_OUTPUT_PATH` - Path for CSV log file (optional)
 
 ### Docker
 
 Build and run using Docker:
 ```bash
 docker build -t helios-telemetry .
-docker run helios-telemetry
+docker run -e SERIAL_PORT=/dev/ttyUSB0 helios-telemetry
 ```
 
 Or using the Makefile:
 ```bash
-make build
-make run
+make run  
 ```
 
 ## Configuration
