@@ -43,4 +43,5 @@ run:
 	uv run src/main.py
 
 submodule:
+	git submodule update --init --recursive
 	git submodule update --remote --merge
