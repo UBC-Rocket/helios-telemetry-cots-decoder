@@ -25,9 +25,10 @@ COPY src/ ./src/
 
 # Generate protos
 RUN mkdir -p generated && \
-    find falcon-protos -name "*.proto" | xargs protoc \
-    --proto_path=falcon-protos \
-    --python_out=generated
+    uv run protoc \
+    -I=falcon-protos \
+    --python_betterproto2_out=generated \
+    $(find falcon-protos -name "*.proto")
 
 RUN uv sync --frozen
 
