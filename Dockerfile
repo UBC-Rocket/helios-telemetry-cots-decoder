@@ -54,4 +54,4 @@ ENV SERIAL_TIMEOUT=1.0
 EXPOSE 5000
 
 # Use the venv's python directly for better performance/signals
-CMD ["python", "src/main.py", "--host", "0.0.0.0", "--port", "5000"]
+CMD ["python", "src/main.py"]
