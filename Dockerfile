@@ -25,10 +25,10 @@ RUN uv sync --frozen --no-install-project
 COPY src/ ./src/
 
 # Generate protos
-RUN mkdir -p generated && \
+RUN mkdir -p src/generated && \
     uv run protoc \
     -I=falcon-protos \
-    --python_betterproto2_out=generated \
+    --python_betterproto2_out=src/generated \
     $(find falcon-protos -name "*.proto")
 
 RUN uv sync --frozen
