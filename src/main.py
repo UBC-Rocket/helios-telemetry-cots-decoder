@@ -16,6 +16,7 @@ import argparse
 import asyncio
 import os
 import sys
+import contextlib
 
 import serial
 from helios import HeliosClient
@@ -77,42 +78,110 @@ def build_config() -> argparse.Namespace:
   return args
 
 
+async def _wait_first(*events: asyncio.Event) -> None:
+  """Return as soon as any one of the given events is set."""
+  tasks = [asyncio.create_task(e.wait()) for e in events]
+  try:
+    await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+  finally:
+    for t in tasks:
+      t.cancel()
+      with contextlib.suppress(asyncio.CancelledError):
+        await t
+
+
+async def helios_manager(
+  sdk: HeliosClient,
+  ready: asyncio.Event,
+  connection_lost: asyncio.Event,
+  stop: asyncio.Event,
+  retry_delays: tuple[int, ...] = (2, 5, 10, 30, 60),
+) -> None:
+  """
+  Manages the Helios connection lifecycle independently of the reader.
+
+  Flow:
+    1. Try to connect.
+    2. On success  → set `ready`, then wait for either a `connection_lost`
+                      signal (reader got a send failure) or a `stop` signal.
+    3. On failure  → clear `ready`, back off, then loop.
+    4. On stop     → disconnect and return.
+  """
+  attempt = 0
+
+  while not stop.is_set():
+    connection_lost.clear()
+    try:
+      await sdk.connect()
+      ready.set()
+      label = "Connected" if attempt == 0 else "Reconnected"
+      print(f"[Helios] {label}")
+      attempt = 0
+
+      # Stay here until the reader reports a dead connection or we shut down
+      await _wait_first(connection_lost, stop)
+      ready.clear()
+
+      if stop.is_set():
+        break
+
+      print("[Helios] Connection lost — scheduling reconnect…", file=sys.stderr)
+
+    except Exception as e:
+      ready.clear()
+      delay = retry_delays[min(attempt, len(retry_delays) - 1)]
+      label = "Initial connection" if attempt == 0 else "Reconnect"
+      print(
+        f"[Helios] {label} failed: {e}. Retrying in {delay}s…",
+        file=sys.stderr,
+      )
+      attempt += 1
+      # Interruptible sleep — exits early if stop fires
+      with contextlib.suppress(asyncio.TimeoutError):
+        await asyncio.wait_for(stop.wait(), timeout=delay)
+
+  ready.clear()
+  with contextlib.suppress(Exception):
+    await sdk.disconnect()
+  print("[Helios] Manager exited.")
+
+
 async def main_loop(args: argparse.Namespace) -> None:
   """Main loop — read packets, decode them, log and display."""
-  print(f"Opening {args.port} at {args.baud} baud...")
+  print(f"Opening {args.port} at {args.baud} baud…")
 
   helios_sdk = HeliosClient(
-    core_address="Helios", 
+    core_address="Helios",
     core_port=5000,
     node_uri="cots-telemetry-decoder",
   )
 
-  # Attempt initial connection
-  try:
-    await helios_sdk.connect()
-    print("[Helios] Connected successfully")
-  except Exception as e:
-    print(f"[Helios] Initial connection failed: {e}. Will retry in loop.", file=sys.stderr)
+  # Shared coordination events
+  helios_ready      = asyncio.Event()   # set = currently connected
+  connection_lost   = asyncio.Event()   # reader sets this on send failure
+  stop              = asyncio.Event()   # graceful shutdown signal
 
-  # CsvLogger is a no-op context manager substitute when logging is disabled
-  logger_ctx = CsvLogger(args.output) if args.output else _NullLogger()
+  # Helios runs in the background — the reader never waits on it
+  manager_task = asyncio.create_task(
+    helios_manager(helios_sdk, helios_ready, connection_lost, stop)
+  )
+
+  logger_ctx    = CsvLogger(args.output) if args.output else _NullLogger()
   serial_reader = SerialReader(args.port, args.baud, args.timeout)
 
   try:
     with serial_reader as reader, logger_ctx as logger:
       if args.output:
         print(f"Logging to {args.output}")
-      print("Connected. Listening for packets...\n")
+      print("Connected. Listening for packets…\n")
 
       packet_count = 0
 
-      # Use a thread for the blocking serial generator to keep loop responsive
       while True:
-        # Run the blocking 'read' in a thread to avoid freezing the event loop
         raw = await asyncio.to_thread(next, reader.packets(), None)
         if raw is None:
           break
-        
+
         packet_count += 1
 
         if args.debug:
@@ -122,20 +191,18 @@ async def main_loop(args: argparse.Namespace) -> None:
         if packet is None:
           continue
 
-        # Send to SDK asynchronously
-        try:
-          await helios_sdk.publish_event(
-            address="telemetry.packet",   # TODO: Confirm
-            event_type="TelemetryPacket", # TODO: Confirm
-            data=raw
-          )
-        except Exception as e:
-          print(f"[Helios] Send failed: {e}. Attempting reconnect...", file=sys.stderr)
+        # Helios send: non-blocking
+        if helios_ready.is_set():
           try:
-            # Attempt to re-establish the session for the next packet
-            await helios_sdk.connect() 
-          except Exception as recon_err:
-            print(f"[Helios] Reconnect failed: {recon_err}", file=sys.stderr)
+            await helios_sdk.publish_event(
+              address="telemetry.packet",
+              event_type="TelemetryPacket",
+              data=raw,
+            )
+          except Exception as e:
+            print(f"[Helios] Send failed: {e}", file=sys.stderr)
+            helios_ready.clear()
+            connection_lost.set()   # wake the manager to reconnect
 
         if logger:
           logger.write(packet)
@@ -148,18 +215,15 @@ async def main_loop(args: argparse.Namespace) -> None:
   except serial.SerialException as exc:
     print(f"\n[ERROR] Serial error: {exc}", file=sys.stderr)
     print("[ERROR] Failed to establish connection. Check port availability.", file=sys.stderr)
-    sys.exit(1)
   except KeyboardInterrupt:
-    print("\nExiting...")
+    print("\nExiting…")
     if args.output:
-      print(f"CSV saved to {args.output}")
+        print(f"CSV saved to {args.output}")
   except Exception as exc:
     print(f"\n[ERROR] Unexpected error: {type(exc).__name__}: {exc}", file=sys.stderr)
-    sys.exit(1)
   finally:
-    # Clean up SDK connection
-    await helios_sdk.disconnect()
-
+    stop.set()                           # tell the manager to exit cleanly
+    await manager_task                   # wait for it to disconnect and return
 
 # Used when CSV logging is disabled
 class _NullLogger:
