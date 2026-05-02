@@ -95,7 +95,7 @@ async def helios_manager(
   ready: asyncio.Event,
   connection_lost: asyncio.Event,
   stop: asyncio.Event,
-  retry_delays: tuple[int, ...] = (2, 5, 10, 30, 60),
+  retry_delays: tuple[int, ...] = (2, 5),
 ) -> None:
   """
   Manages the Helios connection lifecycle independently of the reader.
