@@ -46,6 +46,7 @@ COPY --from=builder /app /app
 
 # Add the venv to the PATH so we don't always need 'uv run'
 ENV PATH="/app/.venv/bin:$PATH"
+ENV PYTHONUNBUFFERED=1
 
 # Add default env vars for serial config
 ENV SERIAL_BAUD=115200
