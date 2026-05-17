@@ -55,4 +55,4 @@ ENV SERIAL_TIMEOUT=1.0
 EXPOSE 5000
 
 # Use the venv's python directly for better performance/signals
-CMD ["python", "src/main.py"]
+ENTRYPOINT ["python", "src/main.py"]
