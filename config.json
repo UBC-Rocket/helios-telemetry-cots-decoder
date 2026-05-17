@@ -2,5 +2,14 @@
   "volumes": [],
   "ports": [
     "/dev/radio"
+  ],
+  "custom": [
+    {
+      "name": "simulated_data",
+      "description": "Whether to use simulated data instead of reading from the radio. This is useful for testing and development without hardware.",
+      "type": "boolean",
+      "flags": ["--simulated-data"],
+      "default": false
+    }
   ]
 }

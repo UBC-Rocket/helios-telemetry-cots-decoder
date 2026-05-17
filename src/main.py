@@ -25,6 +25,7 @@ from decoder.csv_logger import CsvLogger
 from decoder.formatting import print_compact, print_verbose
 from decoder.packet import decode_packet
 from decoder.serial_reader import SerialReader
+from decoder.simulated_reader import SimulatedReader
 
 RADIO_PORT = "/dev/radio"
 
@@ -66,6 +67,11 @@ def build_config() -> argparse.Namespace:
     default=os.environ.get("CSV_OUTPUT_PATH"),
     metavar="FILE",
     help="CSV log file path.  Env: CSV_OUTPUT_PATH",
+  )
+  parser.add_argument(
+    "--simulated-data",
+    action="store_true",
+    help="Use simulated data instead of reading from the radio. This is useful for testing and development without hardware.",
   )
 
   args = parser.parse_args()
@@ -148,7 +154,13 @@ async def helios_manager(
 
 async def main_loop(args: argparse.Namespace) -> None:
   """Main loop — read packets, decode them, log and display."""
-  print(f"Opening {args.port} at {args.baud} baud…")
+
+  if args.simulated_data:
+    print("Using simulated data (no serial port required)")
+    reader_ctx = SimulatedReader()
+  else:
+    print(f"Opening {args.port} at {args.baud} baud…")
+    reader_ctx = SerialReader(args.port, args.baud, args.timeout)
 
   helios_sdk = HeliosClient(
     core_address="Helios",
@@ -167,10 +179,9 @@ async def main_loop(args: argparse.Namespace) -> None:
   )
 
   logger_ctx    = CsvLogger(args.output) if args.output else _NullLogger()
-  serial_reader = SerialReader(args.port, args.baud, args.timeout)
 
   try:
-    with serial_reader as reader, logger_ctx as logger:
+    with reader_ctx as reader, logger_ctx as logger:
       if args.output:
         print(f"Logging to {args.output}")
       print("Connected. Listening for packets…\n")
